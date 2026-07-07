@@ -1,0 +1,25 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: bookings-db
+    environment:
+      POSTGRES_USER: bookings
+      POSTGRES_PASSWORD: bookings_local_pw
+      POSTGRES_DB: bookings
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Files in /docker-entrypoint-initdb.d run in filename order on first boot.
+      # Numeric prefixes guarantee: schema -> indexes -> seed.
+      - ./db/migrations/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./db/migrations/002_indexes.sql:/docker-entrypoint-initdb.d/002_indexes.sql:ro
+      - ./db/seed/seed.sql:/docker-entrypoint-initdb.d/003_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookings -d bookings"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

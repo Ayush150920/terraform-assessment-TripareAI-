@@ -1,0 +1,97 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+
+permissions:
+  contents: read
+  pull-requests: write # needed to post the plan as a PR comment
+
+jobs:
+  terraform:
+    name: fmt / init / validate / plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [dev, prod]
+
+    defaults:
+      run:
+        working-directory: infra/envs/${{ matrix.environment }}
+
+    env:
+      # Dummy credentials + skip flags let `plan` run without a real AWS account.
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.5"
+
+      - name: Terraform fmt
+        id: fmt
+        run: terraform fmt -check -recursive -diff
+        working-directory: infra
+
+      - name: Terraform init
+        id: init
+        # Committed config uses the local backend, so no remote state or AWS
+        # account is needed for a plan-only PR check.
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        id: plan
+        run: |
+          terraform plan -refresh=false -input=false -no-color \
+            -var-file=terraform.tfvars 2>&1 | tee plan_${{ matrix.environment }}.txt
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+          path: infra/envs/${{ matrix.environment }}/plan_${{ matrix.environment }}.txt
+
+      - name: Comment plan on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const env = '${{ matrix.environment }}';
+            const path = `infra/envs/${env}/plan_${env}.txt`;
+            let plan = 'Plan output not available.';
+            try { plan = fs.readFileSync(path, 'utf8'); } catch (e) {}
+            // Keep the comment within GitHub's size limit.
+            const max = 60000;
+            if (plan.length > max) plan = plan.slice(0, max) + '\n... (truncated, see workflow artifact)';
+            const body = [
+              `### Terraform Plan — \`${env}\``,
+              `fmt: \`${{ steps.fmt.outcome }}\` · init: \`${{ steps.init.outcome }}\` · validate: \`${{ steps.validate.outcome }}\` · plan: \`${{ steps.plan.outcome }}\``,
+              '',
+              '<details><summary>Show plan</summary>',
+              '',
+              '```terraform',
+              plan,
+              '```',
+              '</details>',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

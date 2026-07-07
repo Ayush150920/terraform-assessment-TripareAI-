@@ -1,0 +1,16 @@
+# Production remote-state backend for the PROD environment.
+# Rename to `backend.tf` (and remove the local-default note in the current
+# backend.tf) to enable, then run `terraform init`.
+#
+# The bucket + key are unique to this environment so dev and prod never
+# share state. Create the bucket and lock table once before first init.
+
+terraform {
+  backend "s3" {
+    bucket         = "devops-assessment-tfstate-prod"
+    key            = "prod/network-ecs-rds/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "devops-assessment-tf-locks"
+    encrypt        = true
+  }
+}
